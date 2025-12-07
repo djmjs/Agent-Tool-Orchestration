@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+
+  # TEI is removed because it requires ONNX weights which are missing for many new models on CPU.
+  # We will run embeddings directly in Python instead.
+  # tei:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+  #   ports:
+  #     - "8080:80"
+  #   volumes:
+  #     - ./tei_data:/data
+  #   command: --model-id BAAI/bge-m3 --port 80

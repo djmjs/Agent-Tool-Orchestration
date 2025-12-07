@@ -1,0 +1,14 @@
+tavily-python
+qdrant-client
+fastembed
+python-dotenv
+langchain
+langchain-community
+langchain-qdrant
+langchain-text-splitters
+langchain-core
+arxiv
+pypdf
+langchain-huggingface
+langchain-openai
+onnxruntime-directml
