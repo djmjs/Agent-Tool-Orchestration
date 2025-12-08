@@ -2,18 +2,27 @@ version: '3.8'
 
 services:
   qdrant:
-    image: qdrant/qdrant
+    #image: qdrant/qdrant
+    # just used when first ingesting. After then used ingested snapshot image below!!!!
+    image: agents_test-qdrant-snapshot
     ports:
       - "6333:6333"
-    volumes:
-      - ./qdrant_storage:/qdrant/storage
+    # volumes:
+    #   - ./qdrant_storage:/qdrant/storage
 
-  # TEI is removed because it requires ONNX weights which are missing for many new models on CPU.
-  # We will run embeddings directly in Python instead.
-  # tei:
-  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
-  #   ports:
-  #     - "8080:80"
-  #   volumes:
-  #     - ./tei_data:/data
-  #   command: --model-id BAAI/bge-m3 --port 80
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_storage:/root/.ollama
+
+  ollama-init:
+    image: ollama/ollama
+    container_name: ollama-llama3.2-puller
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: /bin/sh
+    command: "-c 'sleep 5; ollama pull llama3.2'"

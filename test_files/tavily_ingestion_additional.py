@@ -13,7 +13,7 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse
 
-from logger import (Colors, log_error, log_header, log_info, log_success,
+from big_ingestion_one_day.logger import (Colors, log_error, log_header, log_info, log_success,
                     log_warning)
 
 # Load environment variables

@@ -27,7 +27,7 @@ from langchain_core.documents import Document
 from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 
-from logger import log_error, log_header, log_info, log_success, log_warning
+from big_ingestion_one_day.logger import log_error, log_header, log_info, log_success, log_warning
 
 # Load environment variables
 load_dotenv()
@@ -39,11 +39,12 @@ QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "ai_articles_collection_hybrid"
 
-# Batch size reduced from 8 to 4 to prevent GPU OOM
-BATCH_SIZE = 4
+# Batch size reduced for stability
+BATCH_SIZE = 12
 
 # Number of papers per topic
 PAPERS_PER_TOPIC = 200
+
 
 # ============================================================================
 # EMBEDDING MODELS - AMD GPU Accelerated
@@ -68,7 +69,7 @@ if not client.collection_exists(COLLECTION_NAME):
     log_info(f"Creating new collection: {COLLECTION_NAME}")
     client.create_collection(
         collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(size=1024, distance=Distance.COSINE),
+        vectors_config=VectorParams(size=1024, distance=Distance.COSINE, on_disk=True),
         sparse_vectors_config={
             "langchain-sparse": SparseVectorParams(index=SparseIndexParams())
         }
@@ -160,12 +161,7 @@ async def index_documents_async(documents: List[Document], batch_size: int = BAT
 # ============================================================================
 async def download_and_parse_arxiv(topic: str, max_results: int = PAPERS_PER_TOPIC) -> List[Document]:
     """
-    Download and parse arXiv papers.
-    
-    IMPROVEMENTS:
-    1. Per-paper error handling (one failure doesn't stop the download)
-    2. Temp file cleanup even on errors
-    3. Rich metadata including arxiv_id, categories, etc.
+    Download and parse arXiv papers concurrently.
     """
     log_info(f"📥 Downloading {max_results} papers on '{topic}' from arXiv...")
 
@@ -179,52 +175,72 @@ async def download_and_parse_arxiv(topic: str, max_results: int = PAPERS_PER_TOP
     successful = 0
     failed = 0
 
-    for idx, result in enumerate(search.results(), 1):
-        temp_path = None
-        try:
-            # Download to temp file
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
-                temp_path = temp_file.name
+    # Semaphore to limit concurrent downloads/parsing to avoid RAM spikes
+    # 5 concurrent downloads is safe
+    download_semaphore = asyncio.Semaphore(5)
 
-            result.download_pdf(filename=temp_path)
+    async def process_single_paper(result, idx):
+        async with download_semaphore:
+            temp_path = None
+            try:
+                # Run blocking download in thread
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                    temp_path = temp_file.name
 
-            # Parse PDF
-            reader = PdfReader(temp_path)
-            full_text = "\n".join([page.extract_text() for page in reader.pages])
+                await asyncio.to_thread(result.download_pdf, filename=temp_path)
 
-            # Create document with rich metadata
-            doc = Document(
-                page_content=full_text,
-                metadata={
-                    "title": result.title,
-                    "authors": ", ".join([a.name for a in result.authors]),
-                    "published": str(result.published.date()),
-                    "arxiv_id": result.entry_id.split("/")[-1],
-                    "url": result.entry_id,
-                    "categories": ", ".join(result.categories),
-                    "summary": result.summary,
-                    "topic": topic,
-                    "source": "arxiv",
-                },
-            )
-            documents.append(doc)
-            successful += 1
+                # Run blocking PDF parsing in thread
+                def parse_pdf():
+                    reader = PdfReader(temp_path)
+                    return "\n".join([page.extract_text() for page in reader.pages])
 
-            # Progress logging every 10 papers
-            if idx % 10 == 0:
-                log_info(f"   [{idx}/{max_results}] Downloaded...")
+                full_text = await asyncio.to_thread(parse_pdf)
 
-        except Exception as e:
-            failed += 1
-            log_error(f"   ✗ Paper {idx} failed: {str(e)[:100]}")
+                # Create document
+                doc = Document(
+                    page_content=full_text,
+                    metadata={
+                        "title": result.title,
+                        "authors": ", ".join([a.name for a in result.authors]),
+                        "published": str(result.published.date()),
+                        "arxiv_id": result.entry_id.split("/")[-1],
+                        "url": result.entry_id,
+                        "categories": ", ".join(result.categories),
+                        "summary": result.summary,
+                        "topic": topic,
+                        "source": "arxiv",
+                    },
+                )
+                
+                # Progress logging
+                if idx % 10 == 0:
+                    log_info(f"   [{idx}/{max_results}] Processed...")
+                
+                return doc
 
-        finally:
-            # Always cleanup temp file
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+            except Exception as e:
+                log_error(f"   ✗ Paper {idx} failed: {str(e)[:100]}")
+                return None
+
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                    except:
+                        pass
+
+    # Create tasks for all results
+    # Note: search.results() is a generator, we need to listify it to create tasks
+    # This might take a moment to fetch metadata
+    results = list(search.results())
+    tasks = [process_single_paper(res, i+1) for i, res in enumerate(results)]
+    
+    processed_docs = await asyncio.gather(*tasks)
+    
+    # Filter out None results
+    documents = [d for d in processed_docs if d is not None]
+    successful = len(documents)
+    failed = len(tasks) - successful
 
     log_success(f"✅ Downloaded {successful} papers (failed: {failed})")
     return documents

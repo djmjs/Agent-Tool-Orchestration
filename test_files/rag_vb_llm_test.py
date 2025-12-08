@@ -13,8 +13,13 @@ If you have a real OpenAI key, you can add OPENAI_API_KEY to your .env file.
 """
 
 import os
+import sys
 import asyncio
 from dotenv import load_dotenv
+
+# Add parent directory to path to import logger
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -22,7 +27,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 from langchain_community.embeddings import FastEmbedEmbeddings
 from qdrant_client import QdrantClient
-from logger import log_header, log_info, log_success, log_error, log_warning, Colors
+from big_ingestion_one_day.logger import log_header, log_info, log_success, log_error, log_warning, Colors
 
 # Load environment variables
 load_dotenv()
@@ -32,7 +37,7 @@ load_dotenv()
 # ============================================================================
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
-COLLECTION_NAME = "ai_articles_collection_hybrid_test"
+COLLECTION_NAME = "ai_articles_collection_hybrid_test3"
 
 # LLM Configuration (Adjust these for your local setup)
 # Using Ollama running in Docker
@@ -46,7 +51,8 @@ def setup_retriever():
     """Initialize the Qdrant retriever."""
     log_info("Initializing Retriever (Dense + Sparse)...")
     
-    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    # Increased timeout to 60 seconds to prevent ReadTimeout errors
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=60)
     
     dense_embeddings = FastEmbedEmbeddings(
         model_name="BAAI/bge-large-en-v1.5",
@@ -140,6 +146,6 @@ async def run_rag_test(query: str):
 
 if __name__ == "__main__":
     # Test Query based on the "AI Agents" topic we ingested
-    TEST_QUERY = "What are the key challenges in multi-agent reinforcement learning?"
-    
+    #TEST_QUERY = "What do you think happens when Reinforcement Learning Meets Large Language Models"
+    TEST_QUERY= "llms have  post-grad level knwoledge in how many different disipline?"
     asyncio.run(run_rag_test(TEST_QUERY))

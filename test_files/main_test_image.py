@@ -8,15 +8,21 @@ CHANGES FOR TEST:
 - Topics: Only LLMs and Agents
 """
 
-import asyncio
 import os
+import sys
 import gc
 import tempfile
+import asyncio
 import arxiv
+import subprocess
 from typing import List
 from pypdf import PdfReader
 
 from dotenv import load_dotenv 
+
+# Add parent directory to path to import logger
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
 
@@ -25,7 +31,7 @@ from langchain_core.documents import Document
 from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 
-from logger import log_error, log_header, log_info, log_success, log_warning
+from big_ingestion_one_day.logger import log_error, log_header, log_info, log_success, log_warning
 
 # Load environment variables
 load_dotenv()
@@ -35,13 +41,13 @@ load_dotenv()
 # ============================================================================
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
-COLLECTION_NAME = "ai_articles_collection_hybrid_test"  # Separate test collection
+COLLECTION_NAME = "ai_articles_collection_hybrid_test3"  # Separate test collection
 
 # Keep safe batch size
 BATCH_SIZE = 4
 
 # REDUCED FOR TEST
-PAPERS_PER_TOPIC = 5
+PAPERS_PER_TOPIC = 1
 
 # ============================================================================
 # EMBEDDING MODELS - AMD GPU Accelerated
@@ -257,6 +263,32 @@ async def process_topic(topic: str, max_papers: int = PAPERS_PER_TOPIC):
         log_error(f"❌ Topic '{topic}' failed: {e}")
         # Continue with next topic instead of crashing
 
+# ============================================================================
+# DOCKER IMAGE SAVING
+# ============================================================================
+def save_qdrant_image():
+    """Save the current state of the Qdrant container as a new Docker image."""
+    container_name = "agents_test-qdrant-1"
+    image_name = "agents_test-qdrant-snapshot"
+    
+    log_header("💾 SAVING QDRANT IMAGE")
+    try:
+        log_info(f"Committing container '{container_name}' to image '{image_name}'...")
+        # Run docker commit
+        result = subprocess.run(
+            ["docker", "commit", container_name, image_name], 
+            check=True, 
+            capture_output=True, 
+            text=True
+        )
+        log_success(f"✅ Successfully saved Qdrant state to image: {image_name}")
+        log_info(f"Docker output: {result.stdout.strip()}")
+        
+    except subprocess.CalledProcessError as e:
+        log_error(f"❌ Failed to save Docker image: {e}")
+        log_error(f"Error output: {e.stderr}")
+    except Exception as e:
+        log_error(f"❌ An unexpected error occurred while saving Docker image: {e}")
 
 # ============================================================================
 # MAIN PIPELINE
@@ -272,8 +304,7 @@ async def main():
 
     # REDUCED TOPICS FOR TEST
     topics = [
-        "Large Language Models",
-        "AI Agents and Multi-Agent Systems",
+        "Large Language Models, LLMs"
     ]
 
     # Process each topic
@@ -301,6 +332,9 @@ async def main():
         
     except Exception as e:
         log_error(f"Failed to get collection stats: {e}")
+
+    # Save Docker Image
+    save_qdrant_image()
 
 
 # ============================================================================
