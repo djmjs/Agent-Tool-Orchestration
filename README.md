@@ -106,3 +106,6 @@ docker-compose up -d
 6.  **Access the UI**:
     Open your browser to [http://127.0.0.1:8000](http://127.0.0.1:8000).
     # what is the crucial aspect of embodied intelligence tasks is?
+
+
+    next think there will be a general ai agent will get the question and decied whihc tool to use. After getting a response from the tool, it will rank the quality of the reponse. If the response is not accaptable it will go to the second and third preffered tool. All the responds will be compared and the main agent will choose which one is a better answer based on the question and save it in the context window for Short time memory, and give it as the response.

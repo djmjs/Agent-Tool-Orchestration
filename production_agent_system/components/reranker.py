@@ -1,19 +1,72 @@
+#can create a micro service for this component later if needed
+
 from typing import List
 from langchain_core.documents import Document
-from ..utils.logger import log_info
+from fastembed.rerank.cross_encoder import TextCrossEncoder
+from ..utils.logger import log_info, log_error
 
 class ReRanker:
     def __init__(self):
-        pass
+        self.encoder = None
+        self._setup()
+
+    def _setup(self):
+        """Initialize the FastEmbed CrossEncoder."""
+        try:
+            log_info("Initializing ReRanker (BAAI/bge-reranker-base)...")
+            # Using FastEmbed with DirectML for AMD GPU support
+            # We use 'base' model as it is smaller and supported.
+            self.encoder = TextCrossEncoder(
+                model_name="BAAI/bge-reranker-base", 
+                providers=["DmlExecutionProvider"],
+                cache_dir="fastembed_storage"
+            )
+            log_info("ReRanker initialized successfully.")
+        except Exception as e:
+            log_error(f"Failed to setup ReRanker: {e}")
+            # Fallback to CPU if DML fails, or just raise
+            try:
+                log_info("Retrying ReRanker on CPU...")
+                self.encoder = TextCrossEncoder(
+                    model_name="BAAI/bge-reranker-base", 
+                    providers=["CPUExecutionProvider"]
+                )
+            except Exception as e2:
+                log_error(f"Failed to setup ReRanker on CPU: {e2}")
+                # If we can't initialize the model, we can't rerank. 
+                # We'll handle this in the rerank method by checking if self.encoder is None.
+                self.encoder = None
 
     def rerank(self, query: str, documents: List[Document], top_k: int = 3) -> List[Document]:
         """
-        Re-ranks the documents based on relevance to the query.
-        Currently a pass-through that slices the top_k, but can be extended with Cross-Encoders.
+        Re-ranks the documents using the local FastEmbed model.
         """
+        if not documents:
+            return []
+        
+        if self.encoder is None:
+            log_error("ReRanker not initialized. Returning original order.")
+            return documents[:top_k]
+
         log_info(f"Re-ranking {len(documents)} documents...")
         
-        # Placeholder for actual re-ranking logic (e.g., using a CrossEncoder)
-        # For now, we trust the retriever's order (Hybrid Search is usually good)
-        
-        return documents[:top_k]
+        try:
+            doc_texts = [doc.page_content for doc in documents]
+            
+            # FastEmbed rerank returns an iterator of scores
+            scores = list(self.encoder.rerank(query, doc_texts))
+            
+            # Pair documents with their scores
+            doc_score_pairs = list(zip(documents, scores))
+            
+            # Sort by score descending
+            doc_score_pairs.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top_k
+            reranked_docs = [doc for doc, score in doc_score_pairs[:top_k]]
+            
+            return reranked_docs
+            
+        except Exception as e:
+            log_error(f"Re-ranking failed: {e}. Returning original order.")
+            return documents[:top_k]

@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 from langchain_core.output_parsers import StrOutputParser
 
-from ..components.stm import ShortTermMemory
+from ..components.short_term_memory import ShortTermMemory
 from ..components.retriever import Retriever
 from ..components.reranker import ReRanker
 from ..components.prompt_gen import PromptGenerator
@@ -12,11 +12,11 @@ from ..utils.logger import log_info, log_error
 
 class Orchestrator:
     def __init__(self):
-        self.stm = ShortTermMemory()
+        self.llm = LLM()
+        self.stm = ShortTermMemory(llm=self.llm.llm)
         self.retriever = Retriever()
         self.reranker = ReRanker()
         self.prompt_gen = PromptGenerator()
-        self.llm = LLM()
         self.reformulator = QueryReformulator(self.llm)
         self.fallback = FallbackHandler()
 

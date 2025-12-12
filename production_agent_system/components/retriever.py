@@ -22,12 +22,14 @@ class Retriever:
             
             dense_embeddings = FastEmbedEmbeddings(
                 model_name="BAAI/bge-large-en-v1.5",
-                providers=["DmlExecutionProvider"]
+                providers=["DmlExecutionProvider"],
+                cache_dir="fastembed_storage"
             )
 
             sparse_embeddings = FastEmbedSparse(
                 model_name="prithivida/Splade_PP_en_v1",
-                providers=["DmlExecutionProvider"]
+                providers=["DmlExecutionProvider"],
+                cache_dir="fastembed_storage"
             )
 
             vectorstore = QdrantVectorStore(
@@ -38,7 +40,7 @@ class Retriever:
                 retrieval_mode=RetrievalMode.HYBRID
             )
             
-            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 5}) # Fetch a bit more for re-ranking
+            self.retriever = vectorstore.as_retriever(search_kwargs={"k": 10}) # Fetch a bit more for re-ranking
         except Exception as e:
             log_error(f"Failed to setup retriever: {e}")
             raise

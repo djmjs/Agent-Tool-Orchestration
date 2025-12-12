@@ -21,7 +21,10 @@ class LLM:
                 base_url=LOCAL_LLM_URL,
                 api_key="ollama",
                 model=MODEL_NAME,
-                temperature=0.0
+                temperature=0.0,
+                tiktoken_model_name="gpt-3.5-turbo" 
+                # It is only using the GPT dictionary for counting tokens. Just tokenizer
+                # llama is the chef, token is the scale
             )
         else:
             log_info("Using Real OpenAI API...", Colors.GREEN)

@@ -9,19 +9,33 @@ class Router:
         
         # We ask for a single word response to make parsing robust for local models
         self.system_prompt = """You are an intelligent router for an AI assistant.
-Your goal is to decide if a user's query requires looking up external information in a vector database (RAG) or if it can be answered with your general knowledge.
+Your goal is to classify the user's query into one of four categories:
 
-The Vector Database contains specialized information about:
-- Large Language Models (LLMs)
-- Reinforcement Learning (RL)
-- Embodied Intelligence
-- AI Agents and Academic Papers
+1. "DATABASE": Use this if the query is about:
+   - Large Language Models (LLMs)
+   - Reinforcement Learning (RL)
+   - Embodied Intelligence
+   - AI Agents and Academic Papers
+   - Specific technical questions requiring retrieval
 
-Decide based on the following criteria:
-- If the query is about the topics above, specific papers, or technical details -> Respond with "DATABASE"
-- If the query is about general knowledge (e.g., "Who is Elon Musk?", "Python code", "Greetings") -> Respond with "GENERAL"
+2. "WEB": Use this if the query is about:
+   - Current events (news, sports, stocks)
+   - Weather
+   - Information not likely to be in the static database
+   - "Search for...", "Find online..."
 
-Return ONLY the word "DATABASE" or "GENERAL". Do not add punctuation or explanation.
+3. "TOOL_Name_related": Use this if the user explicitly asks to:
+   - Update their name
+   - Change their profile information
+   - Set their user ID
+   - "My name is X", "Call me Y"
+
+4. "GENERAL": Use this for:
+   - General knowledge (e.g., "Who is the president?", "Python code")
+   - Greetings (e.g., "Hi", "How are you?")
+   - Questions not related to the specific topics above
+
+Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do not add punctuation or explanation.
 """
         
         self.prompt = ChatPromptTemplate.from_messages([
@@ -32,7 +46,7 @@ Return ONLY the word "DATABASE" or "GENERAL". Do not add punctuation or explanat
 
     async def route(self, question: str) -> str:
         """
-        Returns 'vector_db' or 'general_chat'
+        Returns 'vector_db', 'web_search', 'TOOL_Name_related_use', or 'general_chat'
         """
         if not self.llm:
              return "vector_db" # Default
@@ -44,9 +58,13 @@ Return ONLY the word "DATABASE" or "GENERAL". Do not add punctuation or explanat
             
             if "DATABASE" in cleaned_result:
                 return "vector_db"
+            elif "WEB" in cleaned_result:
+                return "web_search"
+            elif "TOOL_NAME_RELATED" in cleaned_result:
+                return "TOOL_Name_related_use"
             else:
                 return "general_chat"
                 
         except Exception as e:
-            log_info(f"Router error: {e}, defaulting to vector_db")
+            log_info(f"Router error: {e}. Defaulting to vector_db.")
             return "vector_db"

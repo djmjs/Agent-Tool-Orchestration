@@ -13,7 +13,9 @@ class QueryReformulator:
             "which might reference context in the chat history, "
             "formulate a standalone question which can be understood "
             "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
+            "just reformulate it if needed and otherwise return it as is. "
+            "Output ONLY the reformulated question and nothing else. "
+            "Do not add any conversational text like 'Here is the reformulated question'."
         )
         
         self.prompt = ChatPromptTemplate.from_messages([

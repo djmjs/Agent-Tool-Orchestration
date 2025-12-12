@@ -219,3 +219,5 @@ tei_data/
 .env
 
 ollama_storage/
+
+fastembed_storage/
