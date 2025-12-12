@@ -1,111 +1,109 @@
 # Production Agent System
 
-This directory contains a modular, production-ready architecture for a RAG (Retrieval-Augmented Generation) agent. It separates concerns into distinct components, controlled by a central orchestrator.
+This directory contains a modular, production-ready architecture for an **Agentic RAG System**. Unlike simple linear pipelines, this system uses a **Graph-based Orchestrator** (LangGraph) to dynamically decide the best course of action for each user query.
 
 ## 🏗️ Architecture
 
-The system follows a linear pipeline architecture orchestrated by a central controller:
+The system follows a **Router-based Agentic Workflow**:
 
 ```mermaid
 graph TD
     User[User / Frontend] --> API[FastAPI Endpoint]
-    API --> Orch[Controller / Orchestrator]
+    API --> Orch[Graph Orchestrator]
     
-    subgraph "Agent Components"
-        Orch --> Ret[Retriever]
-        Orch --> Rank[Re-Ranker]
-        Orch --> STM[Short Term Memory]
-        Orch --> Prompt[Prompt Generator]
-        Orch --> LLM[LLM Service]
+    subgraph "Agent Graph"
+        Orch --> Reform[Query Reformulator]
+        Reform --> Router[Semantic Router]
+        
+        Router -->|Technical/Papers| RAG[Vector DB Retrieval]
+        Router -->|News/Live Info| Web[Web Search (Tavily)]
+        Router -->|Profile Updates| Tools[Tool Execution]
+        Router -->|Chit-Chat| Gen[Generation]
+        
+        RAG --> Gen
+        Web --> Gen
+        Tools --> Gen
     end
     
-    Ret --> |Raw Docs| Rank
-    Rank --> |Top K Docs| Prompt
-    STM --> |Chat History| Prompt
-    Prompt --> |Final Prompt| LLM
-    LLM --> |Response| Orch
-    
-    Orch --> Fallback[Fallback Logic]
-    Orch --> Logger[Logging / Metrics]
-    
+    Gen --> |Final Response| Orch
     Orch --> User
 ```
 
 ## 📂 Component Breakdown
 
 ### 1. Frontend (`frontend/`)
-- **`api.py`**: The entry point for the web server. It uses **FastAPI** to expose a REST API (`POST /query`) and serves the HTML UI. It initializes the `Orchestrator` and passes user queries to it.
-- **`templates/index.html`**: A clean, responsive web interface for chatting with the agent. It handles sending requests to the API and rendering the markdown response and source citations.
+- **`api.py`**: The entry point. Uses **FastAPI** to expose the REST API. It initializes the `GraphOrchestrator` and loads environment variables (including API keys).
+- **`templates/index.html`**: A clean web interface for chatting with the agent.
 
 ### 2. Controller (`controller/`)
-- **`orchestrator.py`**: The "brain" of the operation. It does not contain business logic itself but coordinates the flow of data between components.
-    1.  Receives query.
-    2.  Calls **Retriever** to get documents.
-    3.  Calls **Re-Ranker** to filter/sort documents.
-    4.  Fetches history from **STM**.
-    5.  Calls **Prompt Generator** to create the context window.
-    6.  Calls **LLM** to generate the answer.
-    7.  Updates **STM** with the new interaction.
-    8.  Handles errors via **Fallback**.
+- **`graph_orchestrator.py`**: The new "brain" of the system, built with **LangGraph**.
+    -   Manages the state of the conversation (`AgentState`).
+    -   Defines the nodes (Reformulate, Route, Retrieve, Search, Generate) and conditional edges.
+    -   Prevents hallucinations by strictly controlling when tools are called.
 
 ### 3. Components (`components/`)
 These are specialized classes that handle specific tasks.
 
--   **`retriever.py`**: Handles communication with the **Qdrant** vector database.
-    -   Implements **Hybrid Search** using Dense Embeddings (`BAAI/bge-large-en-v1.5`) and Sparse Embeddings (`prithivida/Splade_PP_en_v1`).
-    -   Returns a list of raw documents relevant to the query.
+-   **`router.py`**: A specialized agent that classifies user intent into 4 categories:
+    1.  **DATABASE**: Technical queries (triggers RAG).
+    2.  **WEB**: Current events/news (triggers Tavily Search).
+    3.  **TOOL**: Profile updates (triggers `update_user_info`).
+    4.  **GENERAL**: Conversational chit-chat.
 
--   **`reranker.py`**: Responsible for refining the retrieved documents.
-    -   *Current State*: A pass-through that slices the top K results.
-    -   *Future State*: Can be upgraded to use a Cross-Encoder (like BGE-Reranker) to semantically score documents and discard irrelevant ones before they hit the LLM context window.
+-   **`web_search.py`**: Integrates **Tavily API** to perform real-time web searches when the local database is insufficient.
 
--   **`stm.py` (Short Term Memory)**: Manages the conversation history.
-    -   Stores the last $N$ turns of conversation.
-    -   Ensures the LLM "remembers" previous questions in the current session.
+-   **`query_reformulator.py`**: Uses the LLM to rewrite vague follow-up questions (e.g., "How does it work?") into standalone queries based on chat history.
 
--   **`prompt_gen.py`**: Constructs the actual text sent to the LLM.
-    -   Combines the **System Instruction**, **Retrieved Context**, **Chat History**, and **User Question** into a single formatted prompt.
+-   **`retriever.py`**: Handles communication with **Qdrant**.
+    -   Implements **Hybrid Search** (Dense + Sparse Embeddings).
+    -   Uses persistent model storage in `fastembed_storage/` to avoid re-downloading models.
 
--   **`llm.py`**: The interface for the Large Language Model.
-    -   Supports **Local LLMs** (via Ollama/LM Studio) and **OpenAI**.
-    -   Abstracts the specific API calls so you can swap models easily.
+-   **`short_term_memory.py`**: Manages conversation history using LangChain's `ConversationSummaryBufferMemory`.
+
+-   **`prompt_gen.py`**: Constructs the final prompt, injecting context from RAG or Web Search results into the system message.
+
+-   **`llm.py`**: The interface for the Large Language Model (supports Ollama/Llama 3.2 and OpenAI).
 
 ### 4. Utilities (`utils/`)
--   **`fallback.py`**: Provides graceful degradation. If the database is down, or no documents are found, this component ensures the user gets a helpful message instead of a raw 500 Server Error.
--   **`logger.py`**: A centralized logging utility with color-coded output to help debug the flow of the application in the terminal.
+-   **`logger.py`**: Centralized color-coded logging for debugging.
 
 ## 🚀 How to Run
 
 ### Prerequisites
-Ensure your Docker containers (Qdrant & Ollama) are running:
-```powershell
-docker-compose up -d
-```
-
-2. Venv
-    ```bash
-    .\venv\Scripts\Activate.ps1
+1.  **Environment Setup**:
+    Create a `.env` file in the project root:
+    ```env
+    TAVILY_API_KEY=tvly-xxxxxxxxxxxx
+    OPENAI_API_KEY=sk-xxxxxxxx (Optional, if not using Ollama)
     ```
 
-3.  **Install Dependencies:**
-    ```bash
+2.  **Docker Services**:
+    Ensure Qdrant and Ollama are running:
+    ```powershell
+    docker-compose up -d
+    ```
+
+3.  **Python Environment**:
+    ```powershell
+    .\venv\Scripts\Activate.ps1
     pip install -r requirements.txt
     ```
-
-4.  **Pip Installs:**
-    ```bash
+    *Note: If you have issues with ONNX Runtime, reinstall it:*
+    ```powershell
     pip uninstall -y onnxruntime
     pip install --force-reinstall onnxruntime-directml
     ```
 
-5.  **Run production.py:**
-    ```bash
+4.  **Start the Server**:
+    ```powershell
     python production_agent_system/main.py
     ```
+    Access the UI at `http://127.0.0.1:8000`.
 
-6.  **Access the UI**:
-    Open your browser to [http://127.0.0.1:8000](http://127.0.0.1:8000).
-    # what is the crucial aspect of embodied intelligence tasks is?
+## 🧠 Key Features
+-   **Adaptive Routing**: Doesn't just RAG everything. It knows when to search the web or just talk.
+-   **Self-Correction**: If a tool doesn't exist, the system catches the error and instructs the LLM to answer directly.
+-   **Persistent Caching**: Embedding models are cached locally to speed up startup.
+-   **Hybrid Search**: Combines semantic understanding with keyword matching for better retrieval accuracy.
 
 
-    next think there will be a general ai agent will get the question and decied whihc tool to use. After getting a response from the tool, it will rank the quality of the reponse. If the response is not accaptable it will go to the second and third preffered tool. All the responds will be compared and the main agent will choose which one is a better answer based on the question and save it in the context window for Short time memory, and give it as the response.
