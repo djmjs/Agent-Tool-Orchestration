@@ -21,7 +21,7 @@ Your goal is to classify the user's query into one of four categories:
 2. "WEB": Use this if the query is about:
    - Current events (news, sports, stocks)
    - Weather
-   - Specific facts about people, companies, or places (e.g., "How old is X?", "Who is CEO of Y?")
+   - Specific facts about the question asked, but couldnt answered with the general knowledge or needs up to date information (e.g., "How old is X?", "Who is CEO of Y?")
    - Information not likely to be in the static database
    - "Search for...", "Find online..."
 

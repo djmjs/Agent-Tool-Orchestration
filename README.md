@@ -71,45 +71,7 @@ To prevent hallucinations, we implement an **"LLM-as-a-Judge"** pattern.
 ### 4. Memory Management
 *   **Short-Term Memory**: Implemented using `ConversationSummaryBufferMemory`. It keeps recent messages raw but summarizes older ones to save context window space.
 *   **State Management**: The `GraphOrchestrator` maintains a strictly typed `AgentState` that persists across the graph nodes, ensuring thread safety and clear data flow.
-### 5. Query Lifecycle (Simplified)
 
-```mermaid
-stateDiagram-v2
-    direction TB
-    
-    [*] --> Refine
-    
-    state "1. Refine Query" as Refine {
-        [*] --> Check_History
-        Check_History --> Reformulate: Topic OK
-        Check_History --> Clear_Memory: New Topic
-        Clear_Memory --> Reformulate
-    }
-    
-    Refine --> Route
-    
-    state "2. Route Intent" as Route {
-        [*] --> Classify
-        Classify --> Database: Technical / Papers
-        Classify --> Web: News / Facts / People
-        Classify --> Generate: General Chat
-    }
-
-    state "3. Database (RAG)" as Database {
-        Retrieve_Docs --> ReRank
-        ReRank --> Grade_Relevance
-        Grade_Relevance --> Web: Irrelevant (Fallback)
-        Grade_Relevance --> Generate: Relevant
-    }
-
-    state "4. Web Search" as Web {
-        Search_Tavily --> Generate
-    }
-
-    state "5. Final Response" as Generate {
-        Synthesize_Answer --> [*]
-    }
-```
 
 ## 📂 Component Breakdown
 
@@ -264,7 +226,7 @@ cd ..
 ### How I avoided the "Topic Bleeding"
 When a user sends a message:
 
-1.The system first checks if the message is relevant to the previous conversation context.
-2.If the similarity score is low (e.g., user switches from "What is RL?" to "Search for stock prices"), the system detects this as a topic switch.
-3.It clears the short-term memory, effectively starting a new session.
-4.The query is then processed as a standalone question, preventing "topic bleeding" (e.g., the reformulator won't try to combine "stock prices" with "RL").
+- The system first checks if the message is relevant to the previous conversation context.
+- If the similarity score is low (e.g., user switches from "What is RL?" to "Search for stock prices"), the system detects this as a topic switch.
+- It clears the short-term memory, effectively starting a new session.
+- The query is then processed as a standalone question, preventing "topic bleeding" (e.g., the reformulator won't try to combine "stock prices" with "RL").
