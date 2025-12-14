@@ -10,7 +10,7 @@ dotenv_path = os.path.join(project_root, '.env')
 load_dotenv(dotenv_path)
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -21,11 +21,19 @@ from ..utils.logger import log_info
 
 app = FastAPI(title="Production Agent System")
 
+# Mount Static Files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 # Initialize Orchestrator
 orchestrator = GraphOrchestrator()
 
 # Templates
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(os.path.join(static_dir, "favicon.ico"))
 
 class QueryRequest(BaseModel):
     query: str

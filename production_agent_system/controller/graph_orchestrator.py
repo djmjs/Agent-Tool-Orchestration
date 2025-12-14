@@ -1,6 +1,5 @@
-from typing import TypedDict, Annotated, List, Dict, Any
+from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
-from langgraph.types import Command
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -13,7 +12,9 @@ from ..components.llm import LLM
 from ..components.query_reformulator import QueryReformulator
 from ..components.router import Router
 from ..components.web_search import WebSearch
+from ..components.relevance_grader import RelevanceGrader
 from ..utils.logger import log_info, log_error
+from langfuse.langchain import CallbackHandler
 
 # Define the State
 class AgentState(TypedDict):
@@ -23,6 +24,7 @@ class AgentState(TypedDict):
     user_info: Dict[str, Any]
     final_answer: str
     route: str
+    relevance: str
 
 class GraphOrchestrator:
     def __init__(self):
@@ -34,6 +36,7 @@ class GraphOrchestrator:
         self.reformulator = QueryReformulator(self.llm)
         self.router = Router(self.llm)
         self.web_search = WebSearch()
+        self.grader = RelevanceGrader(self.llm)
         
         # Define tools
         self.tools = [self.update_user_info]
@@ -45,11 +48,10 @@ class GraphOrchestrator:
     @tool
     def update_user_info(user_name: str, user_id: str = "unknown"):
         """
-        Call this tool ONLY when the user explicitly asks to update their name or ID.
-        Do NOT call this tool for general questions.
+        Updates the user's profile information. 
+        Use this tool when the user explicitly asks to change their name or set their ID.
         """
-        # In a real system, this would save to a database
-        return f"Successfully updated user info: Name={user_name}, ID={user_id}"
+        return f"User info updated: Name={user_name}, ID={user_id}"
 
     def _build_graph(self):
         workflow = StateGraph(AgentState)
@@ -58,6 +60,7 @@ class GraphOrchestrator:
         workflow.add_node("reformulate", self.reformulate_query)
         workflow.add_node("router", self.route_query)
         workflow.add_node("retrieve", self.retrieve_documents)
+        workflow.add_node("grade_documents", self.grade_documents)
         workflow.add_node("web_search", self.perform_web_search)
         workflow.add_node("generate", self.generate_response)
         workflow.add_node("tools", self.execute_tools)
@@ -78,7 +81,18 @@ class GraphOrchestrator:
             }
         )
         
-        workflow.add_edge("retrieve", "generate")
+        workflow.add_edge("retrieve", "grade_documents")
+        
+        # Conditional edge from grader
+        workflow.add_conditional_edges(
+            "grade_documents",
+            self.check_relevance,
+            {
+                "relevant": "generate",
+                "irrelevant": "web_search"
+            }
+        )
+
         workflow.add_edge("web_search", "generate")
         
         # Conditional edge from generate
@@ -94,6 +108,33 @@ class GraphOrchestrator:
 
         return workflow.compile()
 
+    async def grade_documents(self, state: AgentState, config: RunnableConfig):
+        query = state["query"]
+        docs = state.get("documents", [])
+        
+        if not docs:
+            return {"documents": []} # Will trigger irrelevant in check_relevance if we handle it right, or we can just pass through.
+            
+        context = "\n\n".join([d.page_content for d in docs])
+        grade = await self.grader.grade(query, context, config=config)
+        state["relevance"] = grade
+        
+        return {"relevance": grade}
+
+    def check_relevance(self, state: AgentState):
+        # If we came from web_search, we don't grade. But this edge is only from grade_documents.
+        relevance = state.get("relevance", "yes")
+        docs = state.get("documents", [])
+        
+        if not docs:
+            return "irrelevant"
+            
+        if "no" in relevance:
+            log_info("Documents graded as irrelevant. Switching to Web Search.")
+            return "irrelevant"
+            
+        return "relevant"
+
     def should_continue(self, state: AgentState):
         messages = state["messages"]
         last_message = messages[-1]
@@ -101,34 +142,52 @@ class GraphOrchestrator:
             return "tools"
         return END
 
-    async def reformulate_query(self, state: AgentState):
+    async def reformulate_query(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
         history = self.stm.get_chat_history()
         
         if history:
-            new_query = await self.reformulator.reformulate(query, history)
-            log_info(f"Reformulated query: {new_query}")
-            return {"query": new_query}
+            # Check Topic Relevance
+            # Find the last human message
+            last_human_msg = None
+            for role, content in reversed(history):
+                if role == "human":
+                    last_human_msg = content
+                    break
+            
+            if last_human_msg:
+                grade = await self.grader.grade_history(query, last_human_msg, config=config)
+                if "no" in grade:
+                    log_info("Topic switch detected. Clearing short-term memory context for reformulation.")
+                    history = [] # Don't use history for reformulation
+            
+            if history:
+                new_query = await self.reformulator.reformulate(query, history, config=config)
+                log_info(f"Reformulated query: {new_query}")
+                # Update the state with the NEW query so downstream nodes use it
+                return {"query": new_query}
+        
         return {"query": query}
 
-    async def route_query(self, state: AgentState):
+    async def route_query(self, state: AgentState, config: RunnableConfig):
+        # Use the potentially reformulated query from the state
         query = state["query"]
-        route = await self.router.route(query)
+        route = await self.router.route(query, config=config)
         log_info(f"Routing query to: {route}")
         return {"route": route}
 
-    async def retrieve_documents(self, state: AgentState):
+    async def retrieve_documents(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
         docs = await self.retriever.retrieve(query)
         reranked_docs = self.reranker.rerank(query, docs)
         return {"documents": reranked_docs}
 
-    async def perform_web_search(self, state: AgentState):
+    async def perform_web_search(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
-        docs = await self.web_search.search(query)
+        docs = await self.web_search.search(query, config=config)
         return {"documents": docs}
 
-    async def generate_response(self, state: AgentState):
+    async def generate_response(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
         docs = state.get("documents", [])
         messages = state["messages"]
@@ -150,17 +209,17 @@ class GraphOrchestrator:
         # Select LLM based on route
         if route == "TOOL_Name_related_use":
             log_info("Using LLM with tools (Router decision)")
-            response = await self.llm_with_tools.ainvoke(messages)
+            response = await self.llm_with_tools.ainvoke(messages, config=config)
         else:
             log_info(f"Using plain LLM (Router decision: {route})")
-            response = await self.llm.llm.ainvoke(messages)
+            response = await self.llm.llm.ainvoke(messages, config=config)
         
         return {
             "messages": messages + [response], 
             "final_answer": response.content
         }
 
-    async def execute_tools(self, state: AgentState):
+    async def execute_tools(self, state: AgentState, config: RunnableConfig):
         messages = state["messages"]
         last_message = messages[-1]
         
@@ -172,7 +231,7 @@ class GraphOrchestrator:
             tool_args = tool_call["args"]
             
             if tool_name == "update_user_info":
-                result = self.update_user_info.invoke(tool_args)
+                result = self.update_user_info.invoke(tool_args, config=config)
                 
                 # Update local state user_info as well
                 current_info.update(tool_args)
@@ -207,7 +266,11 @@ class GraphOrchestrator:
             "final_answer": ""
         }
         
-        result = await self.app.ainvoke(initial_state)
+        # Initialize Langfuse Callback Handler
+        # It will automatically pick up LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
+        langfuse_handler = CallbackHandler()
+        
+        result = await self.app.ainvoke(initial_state, config={"callbacks": [langfuse_handler]})
         
         # Save to memory (Legacy STM)
         self.stm.add_interaction(query, result["final_answer"])

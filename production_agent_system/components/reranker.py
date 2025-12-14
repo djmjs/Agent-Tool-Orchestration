@@ -14,11 +14,21 @@ class ReRanker:
         """Initialize the FastEmbed CrossEncoder."""
         try:
             log_info("Initializing ReRanker (BAAI/bge-reranker-base)...")
-            # Using FastEmbed with DirectML for AMD GPU support
-            # We use 'base' model as it is smaller and supported.
+            
+            # Check available providers first to avoid error logs if DML is missing
+            import onnxruntime as ort
+            available_providers = ort.get_available_providers()
+            
+            providers = ["CPUExecutionProvider"]
+            if "DmlExecutionProvider" in available_providers:
+                providers = ["DmlExecutionProvider"]
+                log_info("Using DmlExecutionProvider for ReRanker")
+            else:
+                log_info("DmlExecutionProvider not found, using CPUExecutionProvider for ReRanker")
+
             self.encoder = TextCrossEncoder(
                 model_name="BAAI/bge-reranker-base", 
-                providers=["DmlExecutionProvider"],
+                providers=providers,
                 cache_dir="fastembed_storage"
             )
             log_info("ReRanker initialized successfully.")
@@ -29,7 +39,8 @@ class ReRanker:
                 log_info("Retrying ReRanker on CPU...")
                 self.encoder = TextCrossEncoder(
                     model_name="BAAI/bge-reranker-base", 
-                    providers=["CPUExecutionProvider"]
+                    providers=["CPUExecutionProvider"],
+                    cache_dir="fastembed_storage"
                 )
             except Exception as e2:
                 log_error(f"Failed to setup ReRanker on CPU: {e2}")
@@ -70,3 +81,19 @@ class ReRanker:
         except Exception as e:
             log_error(f"Re-ranking failed: {e}. Returning original order.")
             return documents[:top_k]
+
+    def compute_score(self, query: str, text: str) -> float:
+        """
+        Computes the relevance score between a query and a text.
+        Returns a float score.
+        """
+        if self.encoder is None:
+            return 0.0
+        
+        try:
+            # rerank returns an iterator of scores
+            scores = list(self.encoder.rerank(query, [text]))
+            return float(scores[0])
+        except Exception as e:
+            log_error(f"Error computing score: {e}")
+            return 0.0

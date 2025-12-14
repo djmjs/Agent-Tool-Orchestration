@@ -21,6 +21,7 @@ Your goal is to classify the user's query into one of four categories:
 2. "WEB": Use this if the query is about:
    - Current events (news, sports, stocks)
    - Weather
+   - Specific facts about people, companies, or places (e.g., "How old is X?", "Who is CEO of Y?")
    - Information not likely to be in the static database
    - "Search for...", "Find online..."
 
@@ -33,6 +34,7 @@ Your goal is to classify the user's query into one of four categories:
 4. "GENERAL": Use this for:
    - General knowledge (e.g., "Who is the president?", "Python code")
    - Greetings (e.g., "Hi", "How are you?")
+   - Questions about the conversation history (e.g., "What did I just ask?", "Summarize our chat")
    - Questions not related to the specific topics above
 
 Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do not add punctuation or explanation.
@@ -44,7 +46,7 @@ Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do n
         ])
         self.output_parser = StrOutputParser()
 
-    async def route(self, question: str) -> str:
+    async def route(self, question: str, config=None) -> str:
         """
         Returns 'vector_db', 'web_search', 'TOOL_Name_related_use', or 'general_chat'
         """
@@ -53,7 +55,7 @@ Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do n
 
         try:
             chain = self.prompt | self.llm | self.output_parser
-            result = await chain.ainvoke({"question": question})
+            result = await chain.ainvoke({"question": question}, config=config)
             cleaned_result = result.strip().upper()
             
             if "DATABASE" in cleaned_result:

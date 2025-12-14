@@ -30,7 +30,7 @@ class LLM:
             log_info("Using Real OpenAI API...", Colors.GREEN)
             self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0)
 
-    async def generate_response(self, messages):
+    async def generate_response(self, messages, config=None):
         if not self.llm:
             raise ValueError("LLM not initialized")
-        return await self.llm.ainvoke(messages)
+        return await self.llm.ainvoke(messages, config=config)

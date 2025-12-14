@@ -21,7 +21,7 @@ class WebSearch:
         except Exception as e:
             log_error(f"Failed to setup WebSearch: {e}")
 
-    async def search(self, query: str):
+    async def search(self, query: str, config=None):
         """
         Search the web and return a list of Document objects.
         """
@@ -32,7 +32,7 @@ class WebSearch:
         log_info(f"Searching web for: {query}")
         try:
             # TavilySearchResults returns [{'url': '...', 'content': '...'}]
-            results = await self.tool.ainvoke(query)
+            results = await self.tool.ainvoke(query, config=config)
             
             documents = []
             for res in results:

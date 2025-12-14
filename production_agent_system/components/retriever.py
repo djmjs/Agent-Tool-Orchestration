@@ -1,4 +1,5 @@
 import os
+import onnxruntime as ort
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 from langchain_community.embeddings import FastEmbedEmbeddings
 from qdrant_client import QdrantClient
@@ -20,15 +21,22 @@ class Retriever:
             log_info("Initializing Retriever...")
             client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=60)
             
+            # Check available providers
+            available_providers = ort.get_available_providers()
+            log_info(f"Available ONNX providers: {available_providers}")
+            
+            providers = ["DmlExecutionProvider"] if "DmlExecutionProvider" in available_providers else ["CPUExecutionProvider"]
+            log_info(f"Using providers: {providers}")
+
             dense_embeddings = FastEmbedEmbeddings(
                 model_name="BAAI/bge-large-en-v1.5",
-                providers=["DmlExecutionProvider"],
+                providers=providers,
                 cache_dir="fastembed_storage"
             )
 
             sparse_embeddings = FastEmbedSparse(
                 model_name="prithivida/Splade_PP_en_v1",
-                providers=["DmlExecutionProvider"],
+                providers=providers,
                 cache_dir="fastembed_storage"
             )
 

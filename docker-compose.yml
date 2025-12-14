@@ -28,3 +28,5 @@ services:
     command: "-c 'sleep 5; ollama pull llama3.2'"
 
 
+
+

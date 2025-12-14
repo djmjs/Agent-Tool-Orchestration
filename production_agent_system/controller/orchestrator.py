@@ -7,6 +7,8 @@ from ..components.reranker import ReRanker
 from ..components.prompt_gen import PromptGenerator
 from ..components.llm import LLM
 from ..components.query_reformulator import QueryReformulator
+from ..components.web_search import WebSearch
+from ..components.relevance_grader import RelevanceGrader
 from ..utils.fallback import FallbackHandler
 from ..utils.logger import log_info, log_error
 
@@ -19,6 +21,8 @@ class Orchestrator:
         self.prompt_gen = PromptGenerator()
         self.reformulator = QueryReformulator(self.llm)
         self.fallback = FallbackHandler()
+        self.web_search = WebSearch()
+        self.grader = RelevanceGrader(self.llm)
 
     async def process_query(self, query: str) -> Dict[str, Any]:
         try:
@@ -48,6 +52,21 @@ class Orchestrator:
             # 3. Prepare Context
             context = "\n\n".join([d.page_content for d in ranked_docs])
             
+            # Check Relevance
+            if context.strip():
+                grade = await self.grader.grade(reformulated_query, context)
+                if "no" in grade:
+                    log_info("Context graded as irrelevant. Falling back to Web Search.")
+                    # Fallback to Web Search
+                    web_docs = await self.web_search.search(reformulated_query)
+                    if web_docs:
+                        ranked_docs = web_docs
+                        context = "\n\n".join([d.page_content for d in ranked_docs])
+                    else:
+                        # If web search fails, use empty context (General Knowledge)
+                        ranked_docs = []
+                        context = ""
+
             # 4. Generate Prompt
             history = self.stm.get_chat_history()
             messages = self.prompt_gen.generate_prompt(context, query, history)

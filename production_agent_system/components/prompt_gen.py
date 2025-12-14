@@ -11,18 +11,15 @@ class PromptGenerator:
         
         # 1. System Instruction
         if context:
-            # RAG Mode
-            system_text = f"""You are a helpful AI assistant. 
-Answer the user's question based on the following context. 
-If the answer is not in the context, say you don't know.
-
-Context:
-{context}
-"""
-        else:
-            # General Chat Mode
+            # RAG Mode: Strict adherence to context
             system_text = """You are a helpful AI assistant. 
-Answer the user's question using your general knowledge. 
+Use the provided context to answer the current question. 
+Ignore previous conversation history if it conflicts with the current context. 
+If the context does not contain the answer to the current question, state that you don't know."""
+        else:
+            # General Chat Mode: Conversational
+            system_text = """You are a helpful AI assistant. 
+Answer the user's question using your general knowledge and the conversation history. 
 Be helpful, harmless, and honest."""
 
         messages.append(SystemMessage(content=system_text))
@@ -34,8 +31,20 @@ Be helpful, harmless, and honest."""
                 messages.append(HumanMessage(content=content))
             elif role == "ai":
                 messages.append(AIMessage(content=content))
+            elif role == "system":
+                messages.append(SystemMessage(content=content))
 
-        # 3. Current Question
-        messages.append(HumanMessage(content=question))
+        # 3. Current Question with Context
+        if context:
+            user_content = f"""Context:
+{context}
+
+Question: 
+{question}
+"""
+        else:
+            user_content = question
+
+        messages.append(HumanMessage(content=user_content))
         
         return messages

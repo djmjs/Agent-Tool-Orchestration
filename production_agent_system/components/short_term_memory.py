@@ -50,17 +50,19 @@ class ShortTermMemory:
         memory_output = self.memory.load_memory_variables({})
         messages = memory_output.get("history", [])
         
-        history = []
+        history_tuples = []
         for msg in messages:
             if isinstance(msg, HumanMessage):
-                history.append(("human", msg.content))
+                history_tuples.append(("human", msg.content))
             elif isinstance(msg, AIMessage):
-                history.append(("ai", msg.content))
+                history_tuples.append(("ai", msg.content))
             elif isinstance(msg, SystemMessage):
-                # If there is a summary, it usually comes as a SystemMessage
-                history.append(("system", f"Summary of previous conversation: {msg.content}"))
-        
-        return history
+                history_tuples.append(("system", msg.content))
+            # Fallback for other message types
+            elif hasattr(msg, 'type') and hasattr(msg, 'content'):
+                 history_tuples.append((msg.type, msg.content))
+                 
+        return history_tuples
 
     def get_ui_history(self) -> Dict[str, List[str]]:
         """
