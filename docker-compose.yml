@@ -1,9 +1,31 @@
 version: '3.8'
 
 services:
+  agent-system:
+    build: .
+    container_name: agent-system
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - HOST=0.0.0.0
+      # If your app needs to talk to Ollama:
+      - OLLAMA_HOST=http://ollama:11434
+      - LANGFUSE_HOST=http://langfuse-web:3000
+      - LANGFUSE_BASE_URL=http://langfuse-web:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+    depends_on:
+      - qdrant
+      - ollama
+    volumes:
+      - ./fastembed_storage:/app/fastembed_storage
+
   qdrant:
-    #image: qdrant/qdrant
-    # just used when first ingesting. After then used ingested snapshot image below!!!!
+    # Using the snapshot image as requested
     image: agents_test-qdrant-snapshot
     ports:
       - "6333:6333"
@@ -25,8 +47,11 @@ services:
     environment:
       - OLLAMA_HOST=ollama:11434
     entrypoint: /bin/sh
-    command: "-c 'sleep 5; ollama pull llama3.2'"
+    # Increased sleep to 10s to ensure ollama server is ready
+    command: "-c 'sleep 10; ollama pull llama3.2'"
 
-
-
+networks:
+  default:
+    name: agent-network
+    external: true
 

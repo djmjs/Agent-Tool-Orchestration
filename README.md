@@ -126,36 +126,41 @@ These are specialized classes that handle specific tasks.
     LANGFUSE_HOST=http://localhost:3000
     ```
 
-2.  **Docker Services**:
-    Ensure Qdrant and Ollama are running:
-    ```powershell
-    docker-compose up -d
-    ```
-
-    **Important:** You must pull the Llama 3.2 model for Ollama to work:
-    ```powershell
-    docker exec -it ollama ollama pull llama3.2
-    ```
-
-    Ensure langfuse is running. For Langfuse install instructions go to the Observability (Langfuse) section.
+2.  **Start Langfuse (Observability)**:
+    Start the Langfuse stack first.
     ```powershell
     cd langfuse_docker
     docker-compose up -d
     cd ..
     ```
 
-3.  **Python Environment**:
+3.  **Start the System (Docker Method)**:
+    Run the entire system (App + DB + LLM) in containers.
+    ```powershell
+    docker-compose up -d --build
+    ```
+    The app will be available at `http://localhost:8000`.
+
+    **Important:** If this is your first time, pull the Llama model:
+    ```powershell
+    docker exec -it ollama ollama pull llama3.2
+    ```
+
+4.  **Alternative: Run Locally (Development)**:
+    If you want to run the Python code outside Docker for debugging:
+    
+    *Start dependencies only:*
+    ```powershell
+    docker-compose up -d qdrant ollama
+    ```
+
+    *Setup Python:*
     ```powershell
     .\venv\Scripts\Activate.ps1
     .\setup.ps1
     ```
-    *Note: The `setup.ps1` script automatically handles the installation of `onnxruntime-directml` and removes conflicting packages to ensure GPU acceleration works.*
 
-    ```powershell
-    pip install --force-reinstall onnxruntime-directml
-    ```
-
-4.  **Start the Server**:
+    *Run App:*
     ```powershell
     python production_agent_system/main.py
     ```

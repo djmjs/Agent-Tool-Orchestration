@@ -11,7 +11,7 @@ langchain-huggingface<1.0.0
 langchain-openai<1.0.0
 arxiv==2.3.1
 pypdf==6.4.0
-onnxruntime-directml==1.23.0
+onnxruntime
 fastapi==0.120.4
 uvicorn==0.38.0
 Jinja2==3.1.6

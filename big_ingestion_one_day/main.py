@@ -37,7 +37,7 @@ load_dotenv()
 # ============================================================================
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
-COLLECTION_NAME = "ai_articles_collection_hybrid"
+COLLECTION_NAME = "ai_articles_collection_hybrid_big_ingestion"
 
 # Batch size reduced for stability
 BATCH_SIZE = 12

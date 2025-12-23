@@ -6,8 +6,8 @@ from qdrant_client import QdrantClient
 from ..utils.logger import log_error, log_info
 
 # Configuration (Should ideally be in a config file)
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION_NAME = "ai_articles_collection_hybrid_test3"
 
 class Retriever:

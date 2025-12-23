@@ -3,7 +3,9 @@ from langchain_openai import ChatOpenAI
 from ..utils.logger import log_info, Colors
 
 # Configuration
-LOCAL_LLM_URL = "http://localhost:11434/v1" 
+# Use OLLAMA_HOST env var, default to localhost for local dev
+ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+LOCAL_LLM_URL = f"{ollama_host}/v1"
 MODEL_NAME = "llama3.2"
 
 class LLM:

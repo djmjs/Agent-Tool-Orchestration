@@ -7,7 +7,14 @@ from dotenv import load_dotenv
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 dotenv_path = os.path.join(project_root, '.env')
-load_dotenv(dotenv_path)
+# Ensure we don't override Docker env vars
+load_dotenv(dotenv_path, override=False)
+
+from ..utils.logger import log_info
+
+# Debug Logging
+log_info(f"LANGFUSE_HOST: {os.getenv('LANGFUSE_HOST')}")
+log_info(f"LANGFUSE_BASE_URL: {os.getenv('LANGFUSE_BASE_URL')}")
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
