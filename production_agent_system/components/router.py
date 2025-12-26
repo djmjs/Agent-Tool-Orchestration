@@ -37,25 +37,30 @@ Your goal is to classify the user's query into one of four categories:
    - Questions about the conversation history (e.g., "What did I just ask?", "Summarize our chat")
    - Questions not related to the specific topics above
 
-Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do not add punctuation or explanation.
+5. "DIRECT_ANSWER": Use this ONLY if:
+   - You have enough information in the conversation history or general knowledge to answer the question IMMEDIATELY without any further search or tools.
+   - The user is just acknowledging something (e.g., "Okay", "Thanks").
+   - The question is trivial.
+
+Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", "GENERAL", or "DIRECT_ANSWER". Do not add punctuation or explanation.
 """
         
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
-            ("human", "{question}"),
+            ("human", "Context:\n{context}\n\nQuestion: {question}"),
         ])
         self.output_parser = StrOutputParser()
 
-    async def route(self, question: str, config=None) -> str:
+    async def route(self, question: str, context: str = "", config=None) -> str:
         """
-        Returns 'vector_db', 'web_search', 'TOOL_Name_related_use', or 'general_chat'
+        Returns 'vector_db', 'web_search', 'TOOL_Name_related_use', 'general_chat', or 'direct_answer'
         """
         if not self.llm:
              return "vector_db" # Default
 
         try:
             chain = self.prompt | self.llm | self.output_parser
-            result = await chain.ainvoke({"question": question}, config=config)
+            result = await chain.ainvoke({"question": question, "context": context}, config=config)
             cleaned_result = result.strip().upper()
             
             if "DATABASE" in cleaned_result:
@@ -64,6 +69,8 @@ Return ONLY one word: "DATABASE", "WEB", "TOOL_Name_related", or "GENERAL". Do n
                 return "web_search"
             elif "TOOL_NAME_RELATED" in cleaned_result:
                 return "TOOL_Name_related_use"
+            elif "DIRECT_ANSWER" in cleaned_result:
+                return "direct_answer"
             else:
                 return "general_chat"
                 

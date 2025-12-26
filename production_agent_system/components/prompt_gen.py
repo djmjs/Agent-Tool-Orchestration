@@ -6,20 +6,23 @@ class PromptGenerator:
     def __init__(self):
         pass
 
-    def generate_prompt(self, context: str, question: str, history: List[Tuple[str, str]]):
+    def generate_prompt(self, context: str, question: str, history: List[Tuple[str, str]], user_info: Dict = None):
         messages = []
         
         # 1. System Instruction
+        system_text = "You are a helpful AI assistant."
+        
+        if user_info:
+            system_text += f"\n\nKNOWN USER INFORMATION:\n{user_info}\nYou can use this information to personalize your answer if relevant."
+
         if context:
             # RAG Mode: Strict adherence to context
-            system_text = """You are a helpful AI assistant. 
-Use the provided context to answer the current question. 
+            system_text += """\n\nUse the provided context to answer the current question. 
 Ignore previous conversation history if it conflicts with the current context. 
 If the context does not contain the answer to the current question, state that you don't know."""
         else:
             # General Chat Mode: Conversational
-            system_text = """You are a helpful AI assistant. 
-Answer the user's question using your general knowledge and the conversation history. 
+            system_text += """\n\nAnswer the user's question using your general knowledge and the conversation history. 
 Be helpful, harmless, and honest."""
 
         messages.append(SystemMessage(content=system_text))

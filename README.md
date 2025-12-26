@@ -4,114 +4,98 @@ This directory contains a modular, production-ready architecture for an **Agenti
 
 ## 🧠 System Workflow (Step-by-Step)
 
-1.  **Topic Check**: The system first checks if the new query is related to the previous conversation. If the topic has changed (e.g., switching from "Bitcoin" to "Elon Musk"), it ignores the previous history to prevent confusion.
-2.  **Reformulation**: It rewrites the user's query to be self-contained (e.g., "How much is it?" $\rightarrow$ "How much is Bitcoin?").
-3.  **Routing**: A specialized "Router Agent" classifies the intent:
+1.  **Context Management**: The system starts by fetching the user's **Long-Term Memory (LTM)** profile from Postgres and checking **Short-Term Memory (STM)** for topic switches.
+2.  **Intelligent Routing**: A specialized "Router Agent" analyzes the query + context to classify the intent:
+    *   **Direct Answer**: For greetings, trivial questions, or questions answerable from memory (skips search).
     *   **Database**: For technical questions about LLMs/Agents.
     *   **Web Search**: For current events, stocks, or specific facts about people/companies.
     *   **Tools**: For updating user profile info.
-    *   **General**: For chit-chat or questions about the conversation history itself.
+    *   **General**: For general knowledge or conversation requiring history.
+3.  **Reformulation (Conditional)**: If search is needed, the query is rewritten specifically for the target (e.g., keyword-rich for DB, natural language for Web).
 4.  **Retrieval & Grading**:
-    *   If **Database** is chosen, it retrieves documents and **Grades** them. If they are irrelevant, it falls back to **Web Search**.
-5.  **Generation**: The LLM generates a final answer using the retrieved context (if any), strictly adhering to the facts provided.
+    *   If **Database** is chosen, it retrieves documents and **Grades** them. If they are irrelevant, it automatically falls back to **Web Search**.
+5.  **Generation**: The LLM generates a final answer using the retrieved context (if any).
+6.  **Memory Update**: After the response, the system analyzes the interaction to extract and save new user details to LTM.
 
 ## 🏗️ Architecture
 
-The system follows a **Router-based Agentic Workflow**:
+The system follows a **Router-First Agentic Workflow**:
 
 ```mermaid
 graph TD
-    User[User / Frontend] --> API[FastAPI Endpoint]
-    API --> Orch[Graph Orchestrator]
-    
-    subgraph "Agent Graph"
-        Orch --> TopicCheck{Topic Switch?}
-        TopicCheck -->|Yes| ClearHist["Ignore History"]
-        TopicCheck -->|No| KeepHist["Keep History"]
-        
-        ClearHist --> Reform[Query Reformulator]
-        KeepHist --> Reform
-        
-        Reform --> Router["Semantic Router"]
-        
-        Router -->|Technical/Papers| RAG["Vector DB Retrieval"]
-        Router -->|News/Facts/People| Web["Web Search (Tavily)"]
-        Router -->|Profile Updates| Tools["Tool Execution"]
-        Router -->|Chit-Chat/Meta| Gen["Generation"]
-        
-        RAG --> Grader{Relevance Grader}
-        Grader -->|Relevant| Gen
-        Grader -->|Irrelevant| Web
-        
-        Web --> Gen
-        Tools --> Gen
-    end
-    
-    Gen --> |Final Response| Orch
-    Orch --> User
+    Start([User Query]) --> Context[Manage Context\n(Fetch LTM + STM)]
+    Context --> Router{Router Decision}
+
+    %% Fast Track
+    Router -- Direct Answer --> Generate[Generate Response]
+
+    %% Standard Tracks
+    Router -- DB/Web/Tool/General --> Reformulate[Reformulate Query\n(Route Specific)]
+    Reformulate --> Dispatch((Dispatch))
+
+    %% Specific Handling
+    Dispatch -- Vector DB --> Retrieve[Retrieve Docs]
+    Retrieve --> Grade[Grade Relevance]
+    Grade -- Relevant --> Generate
+    Grade -- Irrelevant --> WebSearch
+
+    Dispatch -- Web Search --> WebSearch[Web Search]
+    WebSearch --> Generate
+
+    Dispatch -- Tool/General --> Generate
+
+    %% Tool Loop
+    Generate -- Call Tool --> Tools[Execute Tools]
+    Tools --> Generate
+
+    Generate --> End([Final Answer])
 ```
 
-## � Technical Deep Dive
+## 🔧 Technical Deep Dive
 
-### 1. Query Reformulation & Topic Detection
-Before any retrieval happens, the system performs two critical checks:
-*   **Topic Switch Detection**: An LLM-based grader compares the current query with the last user message. If the semantic topic has shifted (e.g., from "Python" to "Weather"), the short-term memory is cleared for the reformulation step to prevent "topic bleeding."
-*   **Coreference Resolution**: If the topic is consistent, the **Query Reformulator** rewrites the query to resolve pronouns (e.g., "How much is **it**?" $\rightarrow$ "How much is **Bitcoin**?"). This ensures the retrieval step searches for the correct entities.
+### 1. Memory Systems (STM & LTM)
+*   **Short-Term Memory (STM)**: Uses `ConversationSummaryBufferMemory` to track the immediate conversation. It includes a **Topic Switch Detector** that analyzes the **full chat history** to prevent "topic bleeding" (e.g., asking "How much is it?" after switching from Bitcoin to Weather).
+*   **Long-Term Memory (LTM)**: Uses **PostgreSQL** to store persistent User Profiles.
+    *   **Structure**: Stores `preferences`, `projects`, `expertise`, `constraints`, `environment`, and **`personal_info`** (Name, Age, Location, etc.).
+    *   **Read**: At the start of every turn, the system fetches the profile and injects relevant details (e.g., "User is a Python dev") into the context.
+    *   **Write**: After every turn, a background process extracts new facts from the conversation and updates the database.
 
-### 2. Hybrid Retrieval & Re-Ranking
-The system uses a two-stage retrieval process for maximum accuracy:
-*   **Hybrid Search**: We use **Qdrant** to perform both dense vector search (semantic meaning) and sparse vector search (keyword matching/SPLADE). This catches both conceptual matches and specific acronyms.
-*   **Cross-Encoder Re-Ranking**: The top 10 results are passed to a **ReRanker** (`BAAI/bge-reranker-base`). This model scores every (Query, Document) pair to strictly order them by relevance, discarding the "pseudo-relevant" results that vector search often returns.
+### 2. Router-First Architecture
+Instead of always reformulating or searching, the **Router** is the first decision maker. It sees the Query + Profile + History and decides:
+*   *"Do I know this already?"* -> **Direct Answer** (Fastest).
+*   *"Is this technical?"* -> **Vector DB**.
+*   *"Is this news?"* -> **Web Search**.
+This minimizes latency and cost by skipping unnecessary steps.
 
-### 3. Relevance Grading (The Judge)
-To prevent hallucinations, we implement an **"LLM-as-a-Judge"** pattern.
-*   After retrieval, a specialized prompt asks the LLM: *"Does this document actually answer the user's question?"*
-*   If the answer is **No**, the system discards the vector DB results and automatically falls back to **Web Search**. This prevents the agent from trying to answer "Who is the CEO of Tesla?" using Python code files.
-
-### 4. Memory Management
-*   **Short-Term Memory**: Implemented using `ConversationSummaryBufferMemory`. It keeps recent messages raw but summarizes older ones to save context window space.
-*   **State Management**: The `GraphOrchestrator` maintains a strictly typed `AgentState` that persists across the graph nodes, ensuring thread safety and clear data flow.
-
+### 3. Hybrid Retrieval & Re-Ranking
+*   **Hybrid Search**: We use **Qdrant** for dense vector search (semantic) + sparse search (keyword/SPLADE).
+*   **Cross-Encoder Re-Ranking**: The top results are re-ranked by `BAAI/bge-reranker-base` to ensure high precision.
+*   **Relevance Grading**: An "LLM-as-a-Judge" evaluates retrieved docs. If they are irrelevant, the system falls back to Web Search.
 
 ## 📂 Component Breakdown
 
-### 1. Frontend (`frontend/`)
-- **`api.py`**: The entry point. Uses **FastAPI** to expose the REST API. It initializes the `GraphOrchestrator` and loads environment variables (including API keys).
-- **`templates/index.html`**: A clean web interface for chatting with the agent.
+### 1. Controller (`controller/`)
+- **`graph_orchestrator.py`**: The "brain" built with **LangGraph**.
+    -   **`manage_context`**: Fetches LTM and checks STM.
+    -   **`route_query`**: Decides the path.
+    -   **`reformulate_query`**: Optimizes queries based on the route.
+    -   **`generate_response`**: Produces the final answer.
 
-### 2. Controller (`controller/`)
-- **`graph_orchestrator.py`**: The new "brain" of the system, built with **LangGraph**.
-    -   Manages the state of the conversation (`AgentState`).
-    -   Defines the nodes (Reformulate, Route, Retrieve, Search, Generate) and conditional edges.
-    -   Prevents hallucinations by strictly controlling when tools are called.
+### 2. Components (`components/`)
+-   **`router.py`**: Classifies intent into 5 categories (`DATABASE`, `WEB`, `TOOL`, `GENERAL`, `DIRECT_ANSWER`).
+-   **`postgres_storage.py`**: Manages persistent user profiles in PostgreSQL.
+-   **`profile_extractor.py`**: Extracts user details (preferences, projects) from chat text.
+-   **`query_reformulator.py`**: Rewrites queries with specialized prompts for each route.
+-   **`retriever.py`**: Handles Qdrant Hybrid Search.
+-   **`web_search.py`**: Integrates Tavily API for real-time info.
+-   **`relevance_grader.py`**: Evaluates document and history relevance.
 
-### 3. Components (`components/`)
-These are specialized classes that handle specific tasks.
-
--   **`router.py`**: A specialized agent that classifies user intent into 4 categories:
-    1.  **DATABASE**: Technical queries (triggers RAG).
-    2.  **WEB**: Current events/news (triggers Tavily Search).
-    3.  **TOOL**: Profile updates (triggers `update_user_info`).
-    4.  **GENERAL**: Conversational chit-chat.
-
--   **`web_search.py`**: Integrates **Tavily API** to perform real-time web searches when the local database is insufficient.
-
--   **`query_reformulator.py`**: Uses the LLM to rewrite vague follow-up questions (e.g., "How does it work?") into standalone queries based on chat history.
-
--   **`retriever.py`**: Handles communication with **Qdrant**.
-    -   Implements **Hybrid Search** (Dense + Sparse Embeddings).
-    -   Uses persistent model storage in `fastembed_storage/` to avoid re-downloading models.
-
--   **`short_term_memory.py`**: Manages conversation history using LangChain's `ConversationSummaryBufferMemory`.
-
--   **`prompt_gen.py`**: Constructs the final prompt, injecting context from RAG or Web Search results into the system message.
-
--   **`llm.py`**: The interface for the Large Language Model (supports Ollama/Llama 3.2 and OpenAI).
--   **`relevance_grader.py`**: The "Judge" that evaluates if retrieved documents are actually relevant to the query.
-
-### 4. Utilities (`utils/`)
--   **`logger.py`**: Centralized color-coded logging for debugging.
--   **`fallback.py`**: Handles errors gracefully (e.g., if retrieval fails) to ensure the user always gets a response instead of a crash.
+### 3. Infrastructure
+-   **Docker Compose**: Orchestrates the entire stack.
+    -   `agent-system`: The main Python application.
+    -   `postgres`: Database for LTM.
+    -   `qdrant`: Vector database for RAG.
+    -   `ollama`: Local LLM inference.
 
 ## 🚀 How to Run
 
@@ -120,118 +104,45 @@ These are specialized classes that handle specific tasks.
     Create a `.env` file in the project root:
     ```env
     TAVILY_API_KEY=tvly-xxxxxxxxxxxx
-    OPENAI_API_KEY=sk-xxxxxxxx (Optional, if not using Ollama)
     LANGFUSE_PUBLIC_KEY=pk-lf-xxxxxxxx
     LANGFUSE_SECRET_KEY=sk-lf-xxxxxxxx
     LANGFUSE_HOST=http://localhost:3000
+    POSTGRES_USER=postgres
+    POSTGRES_PASSWORD=password
+    POSTGRES_DB=agents_db
     ```
 
 2.  **Start Langfuse (Observability)**:
-    Start the Langfuse stack first.
     ```powershell
     cd langfuse_docker
     docker-compose up -d
     cd ..
     ```
 
-3.  **Start the System (Docker Method)**:
-    Run the entire system (App + DB + LLM) in containers.
+3.  **Start the System**:
     ```powershell
     docker-compose up -d --build
     ```
     The app will be available at `http://localhost:8000`.
 
-    **Important:** If this is your first time, pull the Llama model:
+    **First Run Only**: Pull the LLM model:
     ```powershell
     docker exec -it ollama ollama pull llama3.2
     ```
 
-4.  **Alternative: Run Locally (Development)**:
-    If you want to run the Python code outside Docker for debugging:
-    
-    *Start dependencies only:*
-    ```powershell
-    docker-compose up -d qdrant ollama
-    ```
+## � Quick Access Links
 
-    *Setup Python:*
-    ```powershell
-    .\venv\Scripts\Activate.ps1
-    .\setup.ps1
-    ```
+| Service | URL | Description |
+| :--- | :--- | :--- |
+| **Chat Interface** | [http://localhost:8000](http://localhost:8000) | Main UI for interacting with the agent. |
+| **LTM Profiles** | [http://localhost:8000/profiles](http://localhost:8000/profiles) | View raw JSON of all stored user profiles (Postgres). |
+| **Langfuse UI** | [http://localhost:3000](http://localhost:3000) | Observability dashboard (Traces, Logs). |
+| **Qdrant API** | [http://localhost:6333](http://localhost:6333) | Vector Database API endpoint. |
 
-    *Run App:*
-    ```powershell
-    python production_agent_system/main.py
-    ```
+## �🛠️ Observability (Langfuse)
+This project uses **Langfuse** to trace every step of the agent's thought process.
+-   **Traces**: See the exact path taken (Router -> Reformulate -> Search).
+-   **Inputs/Outputs**: View the exact prompts sent to the LLM.
+-   **Latency**: Identify bottlenecks in the graph.
 
-## 🛠️ Observability (Langfuse)
-
-This project uses **Langfuse** for tracing agent steps and LLM calls. Since Langfuse runs in its own Docker stack, follow these steps to set it up.
-
-### 1. Installation & Setup
-1.  **Clone the Langfuse Repository**:
-    Run this in the project root to create a separate folder for Langfuse:
-    ```powershell
-    git clone https://github.com/langfuse/langfuse.git langfuse_docker
-    ```
-
-2.  **Start Langfuse**:
-    ```powershell
-    cd langfuse_docker
-    docker-compose up -d
-    cd ..
-    ```
-
-3.  **Configure Keys**:
-    -   Go to [http://localhost:3000](http://localhost:3000).
-    -   Create an account and a new project.
-    -   Go to **Settings > API Keys** and generate new keys.
-    -   Add them to your `.env` file:
-        ```env
-        LANGFUSE_PUBLIC_KEY=pk-lf-xxxxxxxx
-        LANGFUSE_SECRET_KEY=sk-lf-xxxxxxxx
-        LANGFUSE_HOST=http://localhost:3000
-        ```
-
-### 2. Managing Services (Up/Down)
-
-Since we have two separate Docker setups (one for the Agent's infrastructure and one for Langfuse), you need to manage them separately.
-
-**Start Everything:**
-```powershell
-# 1. Start Ollama & Qdrant (Agent Infrastructure)
-docker-compose up -d
-
-# 2. Start Langfuse (Observability)
-cd langfuse_docker
-docker-compose up -d
-cd ..
-```
-
-**Stop Everything:**
-```powershell
-# 1. Stop Agent Infrastructure
-docker-compose down
-
-# 2. Stop Langfuse
-cd langfuse_docker
-docker-compose down
-cd ..
-```
-    Access the UI at `http://127.0.0.1:8000`.
-
-## 🧠 Key Features
--   **Adaptive Routing**: Doesn't just RAG everything. It knows when to search the web or just talk.
--   **Self-Correction**: If a tool doesn't exist, the system catches the error and instructs the LLM to answer directly.
--   **Persistent Caching**: Embedding models are cached locally to speed up startup.
--   **Hybrid Search**: Combines semantic understanding with keyword matching for better retrieval accuracy.
-
-
-### How I avoided the "Topic Bleeding"
-When a user sends a message:
-
-- The system first checks if the message is relevant to the previous conversation context.
-- If the similarity score is low (e.g., user switches from "What is RL?" to "Search for stock prices"), the system detects this as a topic switch.
-- It clears the short-term memory, effectively starting a new session.
-- The query is then processed as a standalone question, preventing "topic bleeding" (e.g., the reformulator won't try to combine "stock prices" with "RL").
+Access the dashboard at `http://localhost:3000`.

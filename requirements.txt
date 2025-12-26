@@ -20,5 +20,4 @@ pydantic>=2.0.0
 requests
 langfuse
 langgraph
-
-langfuse
+asyncpg
