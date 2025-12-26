@@ -10,38 +10,38 @@ graph TD
     classDef ext fill:#f5f5f5,stroke:#616161,stroke-width:2px,stroke-dasharray: 5 5;
 
     %% User
-    User([👤 User / Browser])
+    User(["👤 User / Browser"])
 
     %% LLM Application Group
     subgraph "LLM Application (Agent System)"
         direction TB
-        FastAPI[⚡ FastAPI Server]:::app
-        Guardrails[🛡️ Input Guardrails]:::app
-        Orchestrator[🤖 LangGraph Orchestrator]:::app
-        LangChain[🦜🔗 LangChain]:::app
+        FastAPI["⚡ FastAPI Server"]:::app
+        Guardrails["🛡️ Input Guardrails"]:::app
+        Orchestrator["🤖 LangGraph Orchestrator"]:::app
+        LangChain["🦜🔗 LangChain"]:::app
         
         subgraph "Tools"
-            Tavily[🔍 Tavily Search]:::ext
-            Arxiv[📄 Arxiv]:::ext
-            PDF[📑 PDF Reader]:::ext
+            Tavily["🔍 Tavily Search"]:::ext
+            Arxiv["📄 Arxiv"]:::ext
+            PDF["📑 PDF Reader"]:::ext
         end
     end
 
     %% Inference Engine Group
     subgraph "Inference Engine"
-        Ollama[🦙 Ollama (Llama 3.2)]:::llm
-        FastEmbed[🔢 FastEmbed (Embeddings)]:::llm
+        Ollama["🦙 Ollama (Llama 3.2)"]:::llm
+        FastEmbed["🔢 FastEmbed (Embeddings)"]:::llm
     end
 
     %% Databases Group
     subgraph "Databases & Memory"
-        Qdrant[(💠 Qdrant Vector DB)]:::db
-        Postgres[(🐘 PostgreSQL)]:::db
+        Qdrant[("💠 Qdrant Vector DB")]:::db
+        Postgres[("🐘 PostgreSQL")]:::db
     end
 
     %% Observability Group
     subgraph "Observability"
-        Langfuse[🔭 Langfuse]:::obs
+        Langfuse["🔭 Langfuse"]:::obs
     end
 
     %% Connections
@@ -68,5 +68,4 @@ graph TD
     %% Observability Connections
     Orchestrator -.->|Trace| Langfuse
     LangChain -.->|Trace| Langfuse
-
 ```
