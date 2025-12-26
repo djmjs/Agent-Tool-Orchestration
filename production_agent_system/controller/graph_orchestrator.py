@@ -14,6 +14,7 @@ from ..components.router import Router
 from ..components.web_search import WebSearch
 from ..components.relevance_grader import RelevanceGrader
 from ..components.profile_extractor import ProfileExtractor
+from ..components.guardrails import Guardrails
 from ..components.postgres_storage import postgres_storage
 from ..utils.logger import log_info, log_error
 from langfuse.langchain import CallbackHandler
@@ -28,6 +29,7 @@ class AgentState(TypedDict):
     route: str
     relevance: str
     is_topic_switch: bool
+    safety_status: str
 
 class GraphOrchestrator:
     def __init__(self):
@@ -41,6 +43,7 @@ class GraphOrchestrator:
         self.web_search = WebSearch()
         self.grader = RelevanceGrader(self.llm)
         self.profile_extractor = ProfileExtractor(self.llm)
+        self.guardrails = Guardrails(self.llm)
         
         # Define tools
         self.tools = [self.update_user_info]
@@ -61,6 +64,7 @@ class GraphOrchestrator:
         workflow = StateGraph(AgentState)
 
         # Define Nodes
+        workflow.add_node("guardrails", self.check_guardrails)
         workflow.add_node("manage_context", self.manage_context)
         workflow.add_node("reformulate", self.reformulate_query)
         workflow.add_node("dispatch", self.dispatch_node) # Dummy node for routing
@@ -72,7 +76,17 @@ class GraphOrchestrator:
         workflow.add_node("tools", self.execute_tools)
 
         # Define Edges
-        workflow.set_entry_point("manage_context")
+        workflow.set_entry_point("guardrails")
+        
+        workflow.add_conditional_edges(
+            "guardrails",
+            lambda state: "safe" if state.get("safety_status") == "SAFE" else "unsafe",
+            {
+                "safe": "manage_context",
+                "unsafe": END
+            }
+        )
+
         workflow.add_edge("manage_context", "router")
         
         # Conditional routing
@@ -128,6 +142,17 @@ class GraphOrchestrator:
         workflow.add_edge("tools", "generate")
 
         return workflow.compile()
+
+    async def check_guardrails(self, state: AgentState, config: RunnableConfig):
+        query = state["query"]
+        safety_result = await self.guardrails.check_input(query, config=config)
+        
+        if safety_result != "SAFE":
+            log_info(f"Guardrail blocked query: {safety_result}")
+            # We set the final answer here so it can be returned to the user
+            return {"safety_status": safety_result, "final_answer": f"I cannot process your request. {safety_result}"}
+            
+        return {"safety_status": "SAFE"}
 
     async def grade_documents(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
@@ -370,7 +395,8 @@ class GraphOrchestrator:
             "query": query,
             "documents": [],
             "user_info": {},
-            "final_answer": ""
+            "final_answer": "",
+            "safety_status": "UNKNOWN"
         }
         
         # Initialize Langfuse Callback Handler
