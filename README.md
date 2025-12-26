@@ -21,6 +21,7 @@ This directory contains a modular, production-ready architecture for an **Agenti
 
 The system follows a **Router-First Agentic Workflow**:
 
+```mermaid
 graph TD
     Start([User Query]) --> Context[Manage Context\n(Fetch LTM + STM)]
     Context --> Router{Router Decision}
@@ -48,6 +49,7 @@ graph TD
     Tools --> Generate
 
     Generate --> End([Final Answer])
+```
 
 
 ## 🔧 Technical Deep Dive
