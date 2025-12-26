@@ -21,9 +21,10 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict
 
 from ..controller.graph_orchestrator import GraphOrchestrator
+from ..components.postgres_storage import postgres_storage, UserProfile
 from ..utils.logger import log_info
 
 app = FastAPI(title="Production Agent System")
@@ -64,6 +65,23 @@ async def read_root(request: Request):
 async def query_agent(request: QueryRequest):
     result = await orchestrator.process_query(request.query)
     return QueryResponse(**result)
+
+@app.get("/profiles", response_model=Dict[str, UserProfile])
+async def get_all_profiles():
+    """
+    Retrieve all stored user profiles from Postgres.
+    """
+    return await postgres_storage.get_all_profiles()
+
+@app.get("/profiles/{user_id}", response_model=UserProfile)
+async def get_user_profile(user_id: str):
+    """
+    Retrieve a specific user profile by ID.
+    """
+    profile = await postgres_storage.get_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
 
 if __name__ == "__main__":
     import uvicorn

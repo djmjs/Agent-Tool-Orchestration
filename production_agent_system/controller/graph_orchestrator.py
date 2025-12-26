@@ -13,6 +13,8 @@ from ..components.query_reformulator import QueryReformulator
 from ..components.router import Router
 from ..components.web_search import WebSearch
 from ..components.relevance_grader import RelevanceGrader
+from ..components.profile_extractor import ProfileExtractor
+from ..components.postgres_storage import postgres_storage
 from ..utils.logger import log_info, log_error
 from langfuse.langchain import CallbackHandler
 
@@ -25,6 +27,7 @@ class AgentState(TypedDict):
     final_answer: str
     route: str
     relevance: str
+    is_topic_switch: bool
 
 class GraphOrchestrator:
     def __init__(self):
@@ -37,6 +40,7 @@ class GraphOrchestrator:
         self.router = Router(self.llm)
         self.web_search = WebSearch()
         self.grader = RelevanceGrader(self.llm)
+        self.profile_extractor = ProfileExtractor(self.llm)
         
         # Define tools
         self.tools = [self.update_user_info]
@@ -57,7 +61,9 @@ class GraphOrchestrator:
         workflow = StateGraph(AgentState)
 
         # Define Nodes
+        workflow.add_node("manage_context", self.manage_context)
         workflow.add_node("reformulate", self.reformulate_query)
+        workflow.add_node("dispatch", self.dispatch_node) # Dummy node for routing
         workflow.add_node("router", self.route_query)
         workflow.add_node("retrieve", self.retrieve_documents)
         workflow.add_node("grade_documents", self.grade_documents)
@@ -66,17 +72,32 @@ class GraphOrchestrator:
         workflow.add_node("tools", self.execute_tools)
 
         # Define Edges
-        workflow.set_entry_point("reformulate")
-        workflow.add_edge("reformulate", "router")
+        workflow.set_entry_point("manage_context")
+        workflow.add_edge("manage_context", "router")
         
         # Conditional routing
         workflow.add_conditional_edges(
             "router",
             lambda state: state["route"],
             {
+                "vector_db": "reformulate",
+                "web_search": "reformulate",
+                "TOOL_Name_related_use": "reformulate",
+                "general_chat": "reformulate",
+                "direct_answer": "generate"
+            }
+        )
+        
+        workflow.add_edge("reformulate", "dispatch")
+        
+        # Conditional dispatching after reformulation
+        workflow.add_conditional_edges(
+            "dispatch",
+            lambda state: state["route"],
+            {
                 "vector_db": "retrieve",
                 "web_search": "web_search",
-                "TOOL_Name_related_use": "generate",
+                "TOOL_Name_related_use": "generate", # Tools are handled in generate -> tools loop
                 "general_chat": "generate"
             }
         )
@@ -142,37 +163,117 @@ class GraphOrchestrator:
             return "tools"
         return END
 
-    async def reformulate_query(self, state: AgentState, config: RunnableConfig):
+    def dispatch_node(self, state: AgentState):
+        # Dummy node to facilitate routing after reformulation
+        return {}
+
+    async def extract_user_profile_helper(self, query: str, answer: str):
+        """
+        Extracts user profile information from the conversation and saves it to Postgres.
+        """
+        conversation_text = f"User: {query}\nAgent: {answer}"
+        
+        log_info("Extracting user profile information from recent context...")
+        profile = await self.profile_extractor.extract(conversation_text)
+        
+        # Check if any field has data
+        has_data = any([
+            profile.preferences,
+            profile.projects,
+            profile.constraints,
+            profile.expertise,
+            profile.environment,
+            profile.personal_info
+        ])
+        
+        if has_data:
+            # Use a default user_id
+            # In a real app, user_id would come from auth context
+            user_id = "default_user"
+            
+            log_info(f"Saving extracted profile for user {user_id}: {profile}")
+            await postgres_storage.upsert_profile(user_id, profile)
+        else:
+            log_info("No relevant profile information found to save.")
+
+    async def manage_context(self, state: AgentState, config: RunnableConfig):
         query = state["query"]
         history = self.stm.get_chat_history()
+        updates = {"is_topic_switch": False} # Default to False
+
+        # --- Long-Term Memory (LTM) Check ---
+        try:
+            user_id = "default_user" # TODO: Get from auth context
+            profile = await postgres_storage.get_profile(user_id)
+            
+            if profile:
+                # Convert profile to string for grading
+                profile_data = profile.dict()
+                profile_str = str(profile_data)
+                
+                # Grade relevance of LTM to current query
+                ltm_grade = await self.grader.grade_profile(query, profile_str, config=config)
+                
+                if "yes" in ltm_grade:
+                    log_info("LTM Profile found relevant. Injecting into context.")
+                    updates["user_info"] = profile_data
+                else:
+                    log_info("LTM Profile found irrelevant. Skipping.")
+        except Exception as e:
+            log_error(f"Error checking LTM: {e}")
+        # ------------------------------------
         
         if history:
-            # Check Topic Relevance
-            # Find the last human message
-            last_human_msg = None
-            for role, content in reversed(history):
-                if role == "human":
-                    last_human_msg = content
-                    break
+            # Check Topic Relevance using FULL history (Summary + Recent Messages)
+            # Format history into a string
+            history_str = "\n".join([f"{role.upper()}: {content}" for role, content in history])
             
-            if last_human_msg:
-                grade = await self.grader.grade_history(query, last_human_msg, config=config)
-                if "no" in grade:
-                    log_info("Topic switch detected. Clearing short-term memory context for reformulation.")
-                    history = [] # Don't use history for reformulation
-            
-            if history:
-                new_query = await self.reformulator.reformulate(query, history, config=config)
-                log_info(f"Reformulated query: {new_query}")
-                # Update the state with the NEW query so downstream nodes use it
-                return {"query": new_query}
+            grade = await self.grader.grade_history(query, history_str, config=config)
+            if "no" in grade:
+                log_info("Topic switch detected. Marking context as irrelevant.")
+                updates["is_topic_switch"] = True
+
+        return updates
+
+    async def reformulate_query(self, state: AgentState, config: RunnableConfig):
+        query = state["query"]
+        route = state.get("route", "general_chat")
+        history = self.stm.get_chat_history()
+        is_topic_switch = state.get("is_topic_switch", False)
+        
+        use_history = True
+        if is_topic_switch:
+            use_history = False
+
+        if use_history and history:
+            new_query = await self.reformulator.reformulate(query, history, route=route, config=config)
+            log_info(f"Reformulated query ({route}): {new_query}")
+            return {"query": new_query}
         
         return {"query": query}
 
     async def route_query(self, state: AgentState, config: RunnableConfig):
-        # Use the potentially reformulated query from the state
         query = state["query"]
-        route = await self.router.route(query, config=config)
+        is_topic_switch = state.get("is_topic_switch", False)
+        
+        # Prepare context string for the router
+        context_parts = []
+        
+        # Add User Info
+        user_info = state.get("user_info", {})
+        if user_info:
+            context_parts.append(f"User Profile: {user_info}")
+            
+        # Add Chat History (Summary)
+        history = self.stm.get_chat_history()
+        if history and not is_topic_switch:
+            # Format full history (Summary + Recent)
+            history_str = "\n".join([f"{role}: {content}" for role, content in history])
+            context_parts.append(f"Chat History:\n{history_str}")
+            
+        context_str = "\n\n".join(context_parts)
+        
+        route = await self.router.route(query, context=context_str, config=config)
         log_info(f"Routing query to: {route}")
         return {"route": route}
 
@@ -195,6 +296,12 @@ class GraphOrchestrator:
         
         # Get history
         history = self.stm.get_chat_history()
+        is_topic_switch = state.get("is_topic_switch", False)
+        if is_topic_switch:
+            history = []
+        
+        # Get User Info (LTM)
+        user_info = state.get("user_info", None)
         
         # If this is the first pass (no tool calls yet), prepare the prompt
         if len(messages) == 1:
@@ -204,7 +311,7 @@ class GraphOrchestrator:
                  context_text = "\n\n".join([d.page_content for d in docs])
              
              # Use the existing generate_prompt method
-             messages = self.prompt_gen.generate_prompt(context_text, query, history)
+             messages = self.prompt_gen.generate_prompt(context_text, query, history, user_info=user_info)
         
         # Select LLM based on route
         if route == "TOOL_Name_related_use":
@@ -275,6 +382,14 @@ class GraphOrchestrator:
         # Save to memory (Legacy STM)
         self.stm.add_interaction(query, result["final_answer"])
         
+        # Extract and save user profile (Postgres)
+        # We run this asynchronously but await it to ensure it completes before returning
+        # In a high-throughput system, you might want to run this as a background task
+        try:
+            await self.extract_user_profile_helper(query, result["final_answer"])
+        except Exception as e:
+            log_error(f"Failed to extract/save user profile: {e}")
+
         return {
             "answer": result["final_answer"],
             "sources": [

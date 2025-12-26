@@ -17,19 +17,36 @@ services:
       - LANGFUSE_BASE_URL=http://langfuse-web:3000
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=agents_db
     depends_on:
       - qdrant
       - ollama
+      - postgres
     volumes:
       - ./fastembed_storage:/app/fastembed_storage
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: agent-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=agents_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
 
   qdrant:
     # Using the snapshot image as requested
     image: agents_test-qdrant-snapshot
     ports:
       - "6333:6333"
-    # volumes:
-    #   - ./qdrant_storage:/qdrant/storage
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
 
   ollama:
     image: ollama/ollama
